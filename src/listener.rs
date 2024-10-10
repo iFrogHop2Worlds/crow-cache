@@ -11,7 +11,6 @@ pub struct Listener<K: std::clone::Clone + std::cmp::Eq + std::hash::Hash, V> {
     pub notify_shutdown: broadcast::Sender<()>,
     pub shutdown_complete_rx: mpsc::Receiver<()>,
     pub shutdown_complete_tx: mpsc::Sender<()>,
-
 }
 // lol :*)
 impl<K: std::clone::Clone + std::hash::Hash + std::cmp::Eq + std::cmp::Eq + std::marker::Send + std::default::Default + 'static, V: std::default::Default + std::marker::Send + 'static> Listener<K, V> {

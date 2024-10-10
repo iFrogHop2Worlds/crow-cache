@@ -1,5 +1,7 @@
+use std::hash::Hash;
 use std::io::ErrorKind;
-
+use std::str::FromStr;
+use std::sync::Arc;
 use crate::{helper::buffer_to_array, Command};
 use crate::{LRUCache, Listener};
 use bytes::BytesMut;
@@ -10,9 +12,9 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 
-pub struct Handler<K, V> {
+pub struct Handler<'a, K: Eq + Hash + Clone + Default + Send + FromStr + 'static, V: Default + Send + Clone + 'static> {
     pub connection: Connection,
-    pub _db: LRUCache<K, V>,
+    pub _db: &'a LRUCache<K, V>,
     pub shutdown: Shutdown,
 
     _shutdown_complete: mpsc::Sender<()>,
@@ -29,7 +31,7 @@ pub struct Shutdown {
 
 impl Connection {
     fn new(stream: TcpStream) -> Connection {
-        Connection { stream: stream }
+        Connection { stream }
     }
 
     pub async fn read_frame(&mut self) -> Result<(Command, Vec<String>), std::io::Error> {
@@ -59,11 +61,11 @@ impl Shutdown {
     }
 }
 
-impl Handler {
-    pub fn new(listener: &Listener, socket: TcpStream) -> Handler {
+impl<K: std::clone::Clone + std::cmp::Eq + std::hash::Hash + std::default::Default + std::marker::Send + FromStr, V: std::default::Default + std::marker::Send + std::clone::Clone> Handler<'_, K, V> {
+    pub fn new(listener: &Arc<Listener<K, V>>, socket: TcpStream) -> Handler<K, V> {
         Handler {
             connection: Connection::new(socket),
-            _db: listener._db.clone(),
+            _db: listener.db.clone(),
             shutdown: Shutdown::new(false, listener.notify_shutdown.subscribe()),
             _shutdown_complete: listener.shutdown_complete_tx.clone(),
         }
@@ -75,24 +77,36 @@ impl Handler {
         attrs: Vec<String>,
     ) -> Result<(), std::io::Error> {
         let connection = &mut self.connection;
-        let _db = &self._db;
+        let mut _db = &self._db;
 
         match command {
             Command::Get => {
-                let result = _db.read(&attrs);
+                let key: &K = match K::from_str(&attrs[0]) {
+                    Ok(key) => &key,
+                    Err(_) => {
+                        // Handle conversion error
+                        return Ok(());
+                    }
+                };
+
+                let result = _db.get(key).and(None);
                 // entries.lock().unwrap().get(k);
                 match result {
-                    Ok(result) => {
-                        connection.stream.write_all(&result).await?;
+                    Some(Ok(result)) => {
+                        if let Ok(_) = connection.stream.write_all(&result).await {
+                            println!("Get fired");
+                        } else {
+                            // Handle write error (e.g., log or send error message)
+                        }
                     }
-                    Err(_err) => {
+                    Some(Err(_err)) => {
                         connection.stream.write_all(b"").await?;
                     }
                 }
 
                 return Ok(());
             }
-            Command::Set => {
+            Command::Put => {
                 let resp = _db.write(&attrs);
                 match resp {
                     Ok(result) => {
@@ -109,6 +123,7 @@ impl Handler {
                 connection.stream.write_all(b"invalid command").await?;
                 Err(std::io::Error::from(ErrorKind::InvalidData))
             }
+            _ => {}
         }
     }
 }

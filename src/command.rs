@@ -2,7 +2,7 @@ pub enum Command {
     Get,
     Put,
     IsExpired,
-    Invalid
+    Invalid,
 }
 
 impl Command {
